@@ -9,6 +9,7 @@ import (
 	web "net/url"
 	"os"
 	"path"
+	"sync"
 )
 
 func main() {
@@ -20,9 +21,15 @@ func main() {
 	output := os.Args[1]
 	urls := os.Args[2:]
 
+	var wg sync.WaitGroup
 	for _, files := range urls {
-		downloadFile(files, output)
+		wg.Add(1)
+		go func (u string){
+			downloadFile(u, output)
+			defer wg.Done()
+		}
 	}
+
 }
 
 func downloadFile(url, savePath string) error {
