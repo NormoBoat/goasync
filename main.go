@@ -31,10 +31,10 @@ func downloadFile(url, savePath string) error {
 	}
 
 	resp, err := http.Get(url)
-	defer resp.Body.Close()
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Сервер вернул: %d", resp.StatusCode)
 	}
