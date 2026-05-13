@@ -22,14 +22,14 @@ func main() {
 	urls := os.Args[2:]
 
 	var wg sync.WaitGroup
-	for _, files := range urls {
+	for _, file := range urls {
 		wg.Add(1)
-		go func (u string){
-			downloadFile(u, output)
+		go func(u string) {
 			defer wg.Done()
-		}
+			downloadFile(u, output)
+		}(file)
 	}
-
+	wg.Wait()
 }
 
 func downloadFile(url, savePath string) error {
