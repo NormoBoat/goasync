@@ -30,11 +30,14 @@ func downloadFile(url, savePath string) error {
 		return errors.New("Ошибка создания каталока загрузки")
 	}
 
-	resp, _ := http.Get(url)
+	resp, err := http.Get(url)
+	defer resp.Body.Close()
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Сервер вернул: %d", resp.StatusCode)
 	}
-	defer resp.Body.Close()
 
 	u, err := web.Parse(url)
 	if err != nil {
@@ -51,5 +54,5 @@ func downloadFile(url, savePath string) error {
 
 	_, err = io.Copy(file, resp.Body)
 
-	return nil
+	return err
 }
