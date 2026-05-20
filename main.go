@@ -9,7 +9,9 @@ import (
 	web "net/url"
 	"os"
 	"path"
+	"strconv"
 	"sync"
+	"time"
 )
 
 func main() {
@@ -25,11 +27,44 @@ func main() {
 	for _, file := range urls {
 		wg.Add(1)
 		go func(u string) {
+			isCanRangeDownload(u)
 			defer wg.Done()
-			downloadFile(u, output)
+			_ = downloadFile(u, output)
 		}(file)
 	}
 	wg.Wait()
+}
+
+func isCanRangeDownload(url string) error {
+	clinet := &http.Client{Timeout: 30 * time.Second}
+
+	resp, err := clinet.Head(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	contentLength := resp.Header.Get("Content-Length")
+	size, _ := strconv.ParseInt(contentLength, 10, 64)
+
+	supportsResume := resp.Header.Get("Accept-Ranges") == "bytes"
+
+	log.Printf("Файл: %s\n", path.Base(url))
+	if contentLength != "" {
+		log.Printf("\tРазмер: %d байт (%d МБ)\n", size, size/1024/1024)
+	} else {
+		log.Printf("\tРазмер: неизвестен\n")
+	}
+
+	if supportsResume {
+		log.Printf("\tДокачка: поддерживается\n")
+		log.Printf("Начало загрузки...\n")
+	} else {
+		log.Printf("\tДокачка: не поддерживается\n")
+		log.Printf("Начало загрузки целиком...\n")
+	}
+
+	return nil
 }
 
 func downloadFile(url, savePath string) error {
