@@ -125,7 +125,7 @@ func chunkBorder(chunkSize int64, nuberChunk int64, totalChunks int64, fileSize 
 	begin = chunkSize * (nuberChunk - 1)
 	finish = (chunkSize * nuberChunk) - 1
 	if nuberChunk == totalChunks {
-		finish = begin + (finish - fileSize + 1)
+		finish = fileSize - 1
 	}
 
 	return begin, finish
