@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	web "net/url"
 	"os"
 	"path"
 	"strconv"
@@ -32,7 +31,10 @@ func main() {
 		wg.Add(1)
 		go func(u string) {
 			defer wg.Done()
-			_ = downloadFile(u, output)
+			err := downloadFile(u, output)
+			if err != nil {
+				log.Println(err)
+			}
 		}(file)
 	}
 	wg.Wait()
@@ -75,15 +77,27 @@ func isCanRangeDownload(url string) (int64, error) {
 }
 
 func downloadFile(url, savePath string) error {
-	if err := os.MkdirAll(savePath, os.ModeDir); err != nil {
+	if err := os.MkdirAll(savePath, 0777); err != nil {
 		return errors.New("Ошибка создания каталока загрузки")
 	}
 
 	fileSize, _ := isCanRangeDownload(url)
 	totalChunks := (fileSize + chunkSize - 1) / chunkSize
 
+	filename := path.Base(url)
+	file, err := os.Create(savePath + "/" + filename)
+	if err != nil {
+		return fmt.Errorf("Не удалось создать файл для сохранения: %s\n", err)
+	}
+	defer file.Close()
+
+	err = file.Truncate(fileSize)
+	if err != nil {
+		return err
+	}
+
 	for i := range totalChunks {
-		beg, end := chunkBorder(chunkSize, i+1)
+		beg, end := chunkBorder(chunkSize, i+1, totalChunks, fileSize)
 		log.Printf("Чанк %d/%d: байты %d-%d\n", i+1, totalChunks, beg, end)
 	}
 
@@ -96,37 +110,23 @@ func downloadFile(url, savePath string) error {
 		return fmt.Errorf("Сервер вернул: %d", resp.StatusCode)
 	}
 
-	u, err := web.Parse(url)
-	if err != nil {
-		return err
-	}
-
-	filename := path.Base(u.Path)
-
 	log.Printf("Файл: %s (%d байт)\n", filename, fileSize)
 	log.Printf("Количество чанков: %d", totalChunks)
-
-	// пройтись про границам цанка
-
-	file, err := os.Create(savePath + "/" + filename)
-	file.Truncate(fileSize)
-
-	if err != nil {
-		return fmt.Errorf("Не удалось создать файл для сохранения: %s\n", err)
-	}
-	defer file.Close()
 
 	_, err = io.Copy(file, resp.Body)
 
 	return err
 }
 
-func chunkBorder(chunkSize int64, nuberChunk int64) (int64, int64) {
+func chunkBorder(chunkSize int64, nuberChunk int64, totalChunks int64, fileSize int64) (int64, int64) {
 
 	var begin, finish int64
 
-	finish = (chunkSize * nuberChunk) - 1
 	begin = chunkSize * (nuberChunk - 1)
+	finish = (chunkSize * nuberChunk) - 1
+	if nuberChunk == totalChunks {
+		finish = begin + (finish - fileSize + 1)
+	}
 
 	return begin, finish
 
