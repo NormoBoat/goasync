@@ -116,7 +116,7 @@ func downloadFile(url, savePath string) error {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		if resp.StatusCode != http.StatusPartialContent {
 			return fmt.Errorf("Сервер вернул: %d", resp.StatusCode)
 		}
 
