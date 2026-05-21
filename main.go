@@ -81,7 +81,10 @@ func downloadFile(url, savePath string) error {
 		return errors.New("Ошибка создания каталока загрузки")
 	}
 
-	fileSize, _ := isCanRangeDownload(url)
+	fileSize, err := isCanRangeDownload(url)
+	if err != nil {
+		return err
+	}
 	totalChunks := (fileSize + chunkSize - 1) / chunkSize
 
 	filename := path.Base(url)
@@ -99,21 +102,30 @@ func downloadFile(url, savePath string) error {
 	for i := range totalChunks {
 		beg, end := chunkBorder(chunkSize, i+1, totalChunks, fileSize)
 		log.Printf("Чанк %d/%d: байты %d-%d\n", i+1, totalChunks, beg, end)
-	}
 
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Сервер вернул: %d", resp.StatusCode)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return err
+		}
+
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", beg, end))
+		clinet := &http.Client{Timeout: 30 * time.Second}
+		resp, err := clinet.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+			return fmt.Errorf("Сервер вернул: %d", resp.StatusCode)
+		}
+
+		_, err = io.Copy(file, resp.Body)
+
 	}
 
 	log.Printf("Файл: %s (%d байт)\n", filename, fileSize)
 	log.Printf("Количество чанков: %d", totalChunks)
-
-	_, err = io.Copy(file, resp.Body)
 
 	return err
 }
