@@ -19,10 +19,11 @@ const (
 )
 
 type DownloadState struct {
-	URL         string `json:"url"`
-	TotalSize   int64  `json:"total_size"`
-	ChunkSize   int    `json:"chink_size"`
-	TotalChunks int    `json:"total_chunks"`
+	URL              string `json:"url"`
+	TotalSize        int64  `json:"total_size"`
+	ChunkSize        int    `json:"chink_size"`
+	TotalChunks      int    `json:"total_chunks"`
+	DownloadedChunks []bool `json:"downloaded_chunks"`
 }
 
 func main() {
@@ -126,25 +127,30 @@ func downloadFile(url, savePath string) error {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusPartialContent {
-			return fmt.Errorf("Сервер вернул: %d", resp.StatusCode)
+			return fmt.Errorf("сервер вернул: %d", resp.StatusCode)
 		}
 
 		state := DownloadState{
-			URL:         url,
-			TotalSize:   fileSize,
-			ChunkSize:   chunkSize,
-			TotalChunks: int(totalChunks),
+			URL:              url,
+			TotalSize:        fileSize,
+			ChunkSize:        chunkSize,
+			TotalChunks:      int(totalChunks),
+			DownloadedChunks: make([]bool, totalChunks),
 		}
-
-		data, _ := json.MarshalIndent(state, "", " ")
-		os.WriteFile(fmt.Sprintf("%s/%s.progress", savePath, filename), data, 0644)
 
 		if _, err = file.Seek(beg, io.SeekStart); err != nil {
 			log.Println(err)
 		}
 
 		if _, err = io.Copy(file, resp.Body); err != nil {
+
 			log.Println(err)
+		}
+
+		state.DownloadedChunks[i] = true
+		data, _ := json.MarshalIndent(state, "", " ")
+		if err := os.WriteFile(fmt.Sprintf("%s/%s.progress", savePath, filename), data, 0644); err != nil {
+			return err
 		}
 
 	}
