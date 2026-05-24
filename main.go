@@ -137,10 +137,15 @@ func downloadFile(url, savePath string) error {
 		}
 
 		data, _ := json.MarshalIndent(state, "", " ")
-		os.WriteFile(fmt.Sprintf("%s.progress", filename), data, 0644)
+		os.WriteFile(fmt.Sprintf("%s/%s.progress", savePath, filename), data, 0644)
 
-		file.Seek(beg, io.SeekStart)
-		_, err = io.Copy(file, resp.Body)
+		if _, err = file.Seek(beg, io.SeekStart); err != nil {
+			log.Println(err)
+		}
+
+		if _, err = io.Copy(file, resp.Body); err != nil {
+			log.Println(err)
+		}
 
 	}
 
