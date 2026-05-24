@@ -147,12 +147,12 @@ func downloadFile(url, savePath string) error {
 			log.Println(err)
 		}
 
+		state.DownloadedChunks[i] = true
 		data, _ := json.MarshalIndent(state, "", " ")
 		if err := os.WriteFile(fmt.Sprintf("%s/%s.progress", savePath, filename), data, 0644); err != nil {
 
 			return err
 		}
-		state.DownloadedChunks[i] = true
 
 	}
 
