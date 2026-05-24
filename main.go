@@ -10,7 +10,6 @@ import (
 	"os"
 	"path"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -138,8 +137,7 @@ func downloadFile(url, savePath string) error {
 		}
 
 		data, _ := json.MarshalIndent(state, "", " ")
-		name := strings.Split(filename, ".")
-		os.WriteFile(fmt.Sprintf("%s.zip.progress", name[0]), data, 0644)
+		os.WriteFile(fmt.Sprintf("%s.progress", filename), data, 0644)
 
 		file.Seek(beg, io.SeekStart)
 		_, err = io.Copy(file, resp.Body)
