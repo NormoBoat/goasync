@@ -145,6 +145,7 @@ func downloadFile(url, savePath string) error {
 		if _, err = io.Copy(file, resp.Body); err != nil {
 
 			log.Println(err)
+			continue
 		}
 
 		state.DownloadedChunks[i] = true
