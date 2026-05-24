@@ -40,6 +40,7 @@ func main() {
 		wg.Add(1)
 		go func(u string) {
 			defer wg.Done()
+
 			err := downloadFile(u, output)
 			if err != nil {
 				log.Println(err)
@@ -108,6 +109,13 @@ func downloadFile(url, savePath string) error {
 		return err
 	}
 
+	state := DownloadState{
+		URL:              url,
+		TotalSize:        fileSize,
+		ChunkSize:        chunkSize,
+		TotalChunks:      int(totalChunks),
+		DownloadedChunks: make([]bool, totalChunks),
+	}
 	var beg, end int64
 	for i := range totalChunks {
 		beg, end = chunkBorder(chunkSize, i+1, totalChunks, fileSize)
@@ -128,14 +136,6 @@ func downloadFile(url, savePath string) error {
 
 		if resp.StatusCode != http.StatusPartialContent {
 			return fmt.Errorf("сервер вернул: %d", resp.StatusCode)
-		}
-
-		state := DownloadState{
-			URL:              url,
-			TotalSize:        fileSize,
-			ChunkSize:        chunkSize,
-			TotalChunks:      int(totalChunks),
-			DownloadedChunks: make([]bool, totalChunks),
 		}
 
 		if _, err = file.Seek(beg, io.SeekStart); err != nil {
