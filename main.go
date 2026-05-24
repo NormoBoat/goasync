@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +17,13 @@ import (
 const (
 	chunkSize = 10 * 1024 * 1024
 )
+
+type DownloadState struct {
+	URL         string `json:"url"`
+	TotalSize   int64  `json:"total_size"`
+	ChunkSize   int    `json:"chink_size"`
+	TotalChunks int    `json:"total_chunks"`
+}
 
 func main() {
 	if len(os.Args) < 3 {
@@ -78,7 +86,7 @@ func isCanRangeDownload(url string) (int64, error) {
 
 func downloadFile(url, savePath string) error {
 	if err := os.MkdirAll(savePath, 0777); err != nil {
-		return errors.New("Ошибка создания каталока загрузки")
+		return errors.New("ошибка создания каталока загрузки")
 	}
 
 	fileSize, _ := isCanRangeDownload(url)
@@ -96,10 +104,20 @@ func downloadFile(url, savePath string) error {
 		return err
 	}
 
+	var beg, end int64
 	for i := range totalChunks {
-		beg, end := chunkBorder(chunkSize, i+1, totalChunks, fileSize)
+		beg, end = chunkBorder(chunkSize, i+1, totalChunks, fileSize)
 		log.Printf("Чанк %d/%d: байты %d-%d\n", i+1, totalChunks, beg, end)
 	}
+
+	state := DownloadState{
+		TotalSize:   fileSize,
+		URL:         url,
+		ChunkSize:   chunkSize,
+		TotalChunks: int(totalChunks),
+	}
+	data, _ := json.MarshalIndent(state, "", " ")
+	os.WriteFile(fmt.Sprint(filename, ".zip.progress"), data, 0644)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -107,7 +125,7 @@ func downloadFile(url, savePath string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Сервер вернул: %d", resp.StatusCode)
+		return fmt.Errorf("cервер вернул: %d", resp.StatusCode)
 	}
 
 	log.Printf("Файл: %s (%d байт)\n", filename, fileSize)
