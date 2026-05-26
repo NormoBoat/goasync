@@ -119,9 +119,16 @@ func downloadFile(url, savePath string) error {
 
 	progressFile := fmt.Sprintf("%s/%s.progress", savePath, filename)
 	if _, err := os.Stat(progressFile); err != nil {
+		if os.IsNotExist(err) {
+			if _, err = os.Create(progressFile); err != nil {
+				return err
+			}
+		}
+	} else {
 		data, _ := os.ReadFile(progressFile)
 		json.Unmarshal(data, &state)
 	}
+
 	var beg, end int64
 	for i := range totalChunks {
 		if state.DownloadedChunks[i] {
