@@ -148,27 +148,9 @@ func downloadFile(url, savePath string) error {
 
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", beg, end))
 		clinet := &http.Client{Timeout: 30 * time.Second}
-		resp, err := clinet.Do(req)
-		if err != nil {
-			return err
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusPartialContent {
-			return fmt.Errorf("сервер вернул: %d", resp.StatusCode)
-		}
-
-		if _, err = file.Seek(beg, io.SeekStart); err != nil {
-			log.Println(err)
-		}
-
 		for attempt := 0; attempt < maxRetries; attempt++ {
 
-			if _, err = io.Copy(file, resp.Body); err != nil {
-
-				log.Println(err)
-				continue
-			}
+			resp, err := clinet.Do(req)
 			if err == nil {
 				break
 			}
@@ -177,8 +159,22 @@ func downloadFile(url, savePath string) error {
 				fmt.Printf("Ошибка? повтор через %v...\n", retryDelay)
 				time.Sleep(retryDelay)
 			}
-		}
+			defer resp.Body.Close()
 
+			if resp.StatusCode != http.StatusPartialContent {
+				return fmt.Errorf("сервер вернул: %d", resp.StatusCode)
+			}
+
+			if _, err = file.Seek(beg, io.SeekStart); err != nil {
+				log.Println(err)
+			}
+
+			if _, err = io.Copy(file, resp.Body); err != nil {
+
+				log.Println(err)
+				continue
+			}
+		}
 		state.DownloadedChunks[i] = true
 		data, _ := json.MarshalIndent(state, "", " ")
 		if err := os.WriteFile(progressFile, data, 0644); err != nil {
