@@ -116,8 +116,18 @@ func downloadFile(url, savePath string) error {
 		TotalChunks:      int(totalChunks),
 		DownloadedChunks: make([]bool, totalChunks),
 	}
+
+	progressFile := fmt.Sprintf("%s/%s.progress", savePath, filename)
+	if _, err := os.Stat(progressFile); err != nil {
+		data, _ := os.ReadFile(progressFile)
+		json.Unmarshal(data, &state)
+	}
 	var beg, end int64
 	for i := range totalChunks {
+		if state.DownloadedChunks[i] {
+			fmt.Printf("Чанк %d уже загружен, пропускаем\n", i+1)
+			continue
+		}
 		beg, end = chunkBorder(chunkSize, i+1, totalChunks, fileSize)
 		log.Printf("Чанк %d/%d: байты %d-%d\n", i+1, totalChunks, beg, end)
 
@@ -150,7 +160,7 @@ func downloadFile(url, savePath string) error {
 
 		state.DownloadedChunks[i] = true
 		data, _ := json.MarshalIndent(state, "", " ")
-		if err := os.WriteFile(fmt.Sprintf("%s/%s.progress", savePath, filename), data, 0644); err != nil {
+		if err := os.WriteFile(progressFile, data, 0644); err != nil {
 
 			return err
 		}
