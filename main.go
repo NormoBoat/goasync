@@ -148,6 +148,7 @@ func downloadFile(url, savePath string) error {
 
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", beg, end))
 		clinet := &http.Client{Timeout: 30 * time.Second}
+		isBad := false
 		var resp *http.Response
 		for attempt := 0; attempt < maxRetries; attempt++ {
 
@@ -160,9 +161,11 @@ func downloadFile(url, savePath string) error {
 				fmt.Printf("Ошибка? повтор через %v...\n", retryDelay)
 				time.Sleep(retryDelay)
 			} else {
-				return err
+				isBad = true
 			}
-
+		}
+		if isBad {
+			continue
 		}
 		if resp.StatusCode != http.StatusPartialContent {
 			return fmt.Errorf("сервер вернул: %d", resp.StatusCode)
