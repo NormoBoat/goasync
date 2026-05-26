@@ -159,21 +159,23 @@ func downloadFile(url, savePath string) error {
 			if attempt < maxRetries-1 {
 				fmt.Printf("Ошибка? повтор через %v...\n", retryDelay)
 				time.Sleep(retryDelay)
+			} else {
+				return err
 			}
 
-			if resp.StatusCode != http.StatusPartialContent {
-				return fmt.Errorf("сервер вернул: %d", resp.StatusCode)
-			}
+		}
+		if resp.StatusCode != http.StatusPartialContent {
+			return fmt.Errorf("сервер вернул: %d", resp.StatusCode)
+		}
 
-			if _, err = file.Seek(beg, io.SeekStart); err != nil {
-				log.Println(err)
-			}
+		if _, err = file.Seek(beg, io.SeekStart); err != nil {
+			log.Println(err)
+		}
 
-			if _, err = io.Copy(file, resp.Body); err != nil {
+		if _, err = io.Copy(file, resp.Body); err != nil {
 
-				log.Println(err)
-				continue
-			}
+			log.Println(err)
+			continue
 		}
 		if err != nil {
 			defer resp.Body.Close()
