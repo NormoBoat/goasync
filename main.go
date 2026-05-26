@@ -148,9 +148,10 @@ func downloadFile(url, savePath string) error {
 
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", beg, end))
 		clinet := &http.Client{Timeout: 30 * time.Second}
+		var resp *http.Response
 		for attempt := 0; attempt < maxRetries; attempt++ {
 
-			resp, err := clinet.Do(req)
+			resp, err = clinet.Do(req)
 			if err == nil {
 				break
 			}
@@ -159,7 +160,6 @@ func downloadFile(url, savePath string) error {
 				fmt.Printf("Ошибка? повтор через %v...\n", retryDelay)
 				time.Sleep(retryDelay)
 			}
-			defer resp.Body.Close()
 
 			if resp.StatusCode != http.StatusPartialContent {
 				return fmt.Errorf("сервер вернул: %d", resp.StatusCode)
@@ -174,6 +174,9 @@ func downloadFile(url, savePath string) error {
 				log.Println(err)
 				continue
 			}
+		}
+		if err != nil {
+			defer resp.Body.Close()
 		}
 
 		state.DownloadedChunks[i] = true
