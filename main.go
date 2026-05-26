@@ -43,17 +43,9 @@ func main() {
 		go func(u string) {
 			defer wg.Done()
 
-			for attempt := 0; attempt < maxRetries; attempt++ {
-				err := downloadFile(u, output)
-
-				if err == nil {
-					break
-				}
-
-				if attempt < maxRetries-1 {
-					fmt.Printf("Ошибка? повтор через %v...\n", retryDelay)
-					time.Sleep(retryDelay)
-				}
+			err := downloadFile(u, output)
+			if err != nil {
+				log.Println(err)
 			}
 
 		}(file)
@@ -170,10 +162,21 @@ func downloadFile(url, savePath string) error {
 			log.Println(err)
 		}
 
-		if _, err = io.Copy(file, resp.Body); err != nil {
+		for attempt := 0; attempt < maxRetries; attempt++ {
 
-			log.Println(err)
-			continue
+			if _, err = io.Copy(file, resp.Body); err != nil {
+
+				log.Println(err)
+				continue
+			}
+			if err == nil {
+				break
+			}
+
+			if attempt < maxRetries-1 {
+				fmt.Printf("Ошибка? повтор через %v...\n", retryDelay)
+				time.Sleep(retryDelay)
+			}
 		}
 
 		state.DownloadedChunks[i] = true
