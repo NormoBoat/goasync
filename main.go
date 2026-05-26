@@ -15,7 +15,9 @@ import (
 )
 
 const (
-	chunkSize = 10 * 1024 * 1024
+	chunkSize  = 10 * 1024 * 1024
+	maxRetries = 3
+	retryDelay = 2 * time.Second
 )
 
 type DownloadState struct {
@@ -41,10 +43,19 @@ func main() {
 		go func(u string) {
 			defer wg.Done()
 
-			err := downloadFile(u, output)
-			if err != nil {
-				log.Println(err)
+			for attempt := 0; attempt < maxRetries; attempt++ {
+				err := downloadFile(u, output)
+
+				if err == nil {
+					break
+				}
+
+				if attempt < maxRetries-1 {
+					fmt.Printf("Ошибка? повтор через %v...\n", retryDelay)
+					time.Sleep(retryDelay)
+				}
 			}
+
 		}(file)
 	}
 	wg.Wait()
