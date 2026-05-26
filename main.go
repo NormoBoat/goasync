@@ -175,13 +175,13 @@ func downloadFile(url, savePath string) error {
 				continue
 			}
 		}
+
 		state.DownloadedChunks[i] = true
 		data, _ := json.MarshalIndent(state, "", " ")
 		if err := os.WriteFile(progressFile, data, 0644); err != nil {
 
 			return err
 		}
-
 	}
 
 	log.Printf("Файл: %s (%d байт)\n", filename, fileSize)
