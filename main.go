@@ -162,7 +162,7 @@ func downloadFile(url, savePath string, progress *mpb.Progress) error {
 			decor.Name(" "),
 			decor.CountersKibiByte("% .1f / % .1f", decor.WCSyncWidth),
 			decor.Name(" "),
-			decor.EwmaSpeed(decor.SizeB1024(0), "% .1f", 60, decor.WCSyncWidth),
+			decor.AverageSpeed(decor.SizeB1024(0), "% .1f", decor.WCSyncWidth),
 		),
 	)
 	bar.SetCurrent(downloaded)
@@ -186,7 +186,6 @@ func downloadFile(url, savePath string, progress *mpb.Progress) error {
 
 		var lastErr error
 		for attempt := 0; attempt < maxRetries; attempt++ {
-			start := time.Now()
 			req, err := http.NewRequest("GET", url, nil)
 			if err != nil {
 				return err
@@ -230,7 +229,7 @@ func downloadFile(url, savePath string, progress *mpb.Progress) error {
 						return err
 					}
 
-					bar.EwmaIncrInt64(int64(written), time.Since(start))
+					bar.IncrBy(written)
 					return nil
 				}
 			}
