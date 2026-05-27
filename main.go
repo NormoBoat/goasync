@@ -12,6 +12,9 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/vbauerster/mpb/v8"
+	"github.com/vbauerster/mpb/v8/decor"
 )
 
 const (
@@ -38,13 +41,16 @@ func main() {
 	output := os.Args[1]
 	urls := os.Args[2:]
 
+	progress := mpb.New()
+	log.SetOutput(progress)
+
 	var wg sync.WaitGroup
 	for _, file := range urls {
 		wg.Add(1)
 		go func(u string) {
 			defer wg.Done()
 
-			err := downloadFile(u, output)
+			err := downloadFile(u, output, progress)
 			if err != nil {
 				log.Println(err)
 			}
@@ -52,6 +58,7 @@ func main() {
 		}(file)
 	}
 	wg.Wait()
+	progress.Wait()
 }
 
 func isCanRangeDownload(url string) (int64, error) {
@@ -90,7 +97,7 @@ func isCanRangeDownload(url string) (int64, error) {
 	return size, nil
 }
 
-func downloadFile(url, savePath string) error {
+func downloadFile(url, savePath string, progress *mpb.Progress) error {
 	if err := os.MkdirAll(savePath, 0777); err != nil {
 		return errors.New("ошибка создания каталока загрузки")
 	}
@@ -103,7 +110,7 @@ func downloadFile(url, savePath string) error {
 	total := int(totalChunks)
 
 	filename := path.Base(url)
-	file, err := os.Create(savePath + "/" + filename)
+	file, err := os.OpenFile(savePath+"/"+filename, os.O_CREATE|os.O_RDWR, 0666)
 	if err != nil {
 		return fmt.Errorf("Не удалось создать файл для сохранения: %s\n", err)
 	}
@@ -125,11 +132,11 @@ func downloadFile(url, savePath string) error {
 	progressFile := fmt.Sprintf("%s/%s.progress", savePath, filename)
 	if _, err := os.Stat(progressFile); err != nil {
 		if os.IsNotExist(err) {
-			progress, err := os.Create(progressFile)
+			progressState, err := os.Create(progressFile)
 			if err != nil {
 				return err
 			}
-			if err = progress.Close(); err != nil {
+			if err = progressState.Close(); err != nil {
 				return err
 			}
 		} else {
@@ -145,6 +152,27 @@ func downloadFile(url, savePath string) error {
 		state.DownloadedChunks = downloadedChunks
 	}
 
+	downloaded := downloadedBytes(state.DownloadedChunks, totalChunks, fileSize)
+	bar := progress.AddBar(fileSize,
+		mpb.PrependDecorators(
+			decor.Name(filename+" ", decor.WCSyncWidth),
+		),
+		mpb.AppendDecorators(
+			decor.Percentage(decor.WCSyncSpace),
+			decor.Name(" "),
+			decor.CountersKibiByte("% .1f / % .1f", decor.WCSyncWidth),
+			decor.Name(" "),
+			decor.EwmaSpeed(decor.SizeB1024(0), "% .1f", 60, decor.WCSyncWidth),
+		),
+	)
+	bar.SetCurrent(downloaded)
+	completed := false
+	defer func() {
+		if !completed {
+			bar.Abort(false)
+		}
+	}()
+
 	jobs := make(chan int, total)
 	errCh := make(chan error, total)
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -158,6 +186,7 @@ func downloadFile(url, savePath string) error {
 
 		var lastErr error
 		for attempt := 0; attempt < maxRetries; attempt++ {
+			start := time.Now()
 			req, err := http.NewRequest("GET", url, nil)
 			if err != nil {
 				return err
@@ -197,12 +226,17 @@ func downloadFile(url, savePath string) error {
 						err = os.WriteFile(progressFile, stateData, 0644)
 					}
 					stateMu.Unlock()
-					return err
+					if err != nil {
+						return err
+					}
+
+					bar.EwmaIncrInt64(int64(written), time.Since(start))
+					return nil
 				}
 			}
 
 			if attempt < maxRetries-1 {
-				fmt.Printf("Ошибка? повтор через %v...\n", retryDelay)
+				log.Printf("Ошибка? повтор через %v...\n", retryDelay)
 				time.Sleep(retryDelay)
 			}
 		}
@@ -227,7 +261,7 @@ func downloadFile(url, savePath string) error {
 		downloaded := state.DownloadedChunks[i]
 		stateMu.Unlock()
 		if downloaded {
-			fmt.Printf("Чанк %d уже загружен, пропускаем\n", i+1)
+			log.Printf("Чанк %d уже загружен, пропускаем\n", i+1)
 			continue
 		}
 		jobs <- i
@@ -246,7 +280,25 @@ func downloadFile(url, savePath string) error {
 	log.Printf("Файл: %s (%d байт)\n", filename, fileSize)
 	log.Printf("Количество чанков: %d", totalChunks)
 
-	return err
+	bar.SetTotal(fileSize, true)
+	completed = true
+
+	return nil
+}
+
+func downloadedBytes(chunks []bool, totalChunks int64, fileSize int64) int64 {
+	var size int64
+	for i, downloaded := range chunks {
+		if !downloaded {
+			continue
+		}
+		beg, end := chunkBorder(chunkSize, int64(i+1), totalChunks, fileSize)
+		size += end - beg + 1
+	}
+	if size > fileSize {
+		return fileSize
+	}
+	return size
 }
 
 func chunkBorder(chunkSize int64, nuberChunk int64, totalChunks int64, fileSize int64) (int64, int64) {
