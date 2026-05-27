@@ -1,3 +1,20 @@
-.idea
 .DS_Store
-/out
+.idea/
+.vscode/
+
+# Build artifacts
+goasync
+golab
+downloader
+*.exe
+*.test
+*.out
+coverage.out
+bin/
+build/
+dist/
+
+# Download output and resume state
+out/
+downloads/
+*.progress

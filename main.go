@@ -51,6 +51,7 @@ func main() {
 	defer signal.Stop(sigChan)
 
 	progress := mpb.New()
+	// Route log messages through mpb so they do not corrupt active progress bars.
 	log.SetOutput(progress)
 
 	go func() {
@@ -179,6 +180,7 @@ func downloadFile(ctx context.Context, url, savePath string, progress *mpb.Progr
 	}
 
 	var stateMu sync.Mutex
+	// saveState is shared by workers and shutdown flow; keep state serialization atomic.
 	saveState := func() error {
 		stateMu.Lock()
 		defer stateMu.Unlock()
@@ -223,6 +225,7 @@ func downloadFile(ctx context.Context, url, savePath string, progress *mpb.Progr
 
 		var lastErr error
 		for attempt := 0; attempt < maxRetries; attempt++ {
+			// Do not bind active chunk requests to ctx: on Ctrl+C they should finish and persist.
 			req, err := http.NewRequest("GET", url, nil)
 			if err != nil {
 				return err
@@ -363,13 +366,13 @@ func downloadedBytes(chunks []bool, totalChunks int64, fileSize int64) int64 {
 	return size
 }
 
-func chunkBorder(chunkSize int64, nuberChunk int64, totalChunks int64, fileSize int64) (int64, int64) {
+func chunkBorder(chunkSize int64, numberChunk int64, totalChunks int64, fileSize int64) (int64, int64) {
 
 	var begin, finish int64
 
-	begin = chunkSize * (nuberChunk - 1)
-	finish = (chunkSize * nuberChunk) - 1
-	if nuberChunk == totalChunks {
+	begin = chunkSize * (numberChunk - 1)
+	finish = (chunkSize * numberChunk) - 1
+	if numberChunk == totalChunks {
 		finish = fileSize - 1
 	}
 
