@@ -18,6 +18,7 @@ const (
 	chunkSize  = 10 * 1024 * 1024
 	maxRetries = 3
 	retryDelay = 2 * time.Second
+	maxWorkers = 8
 )
 
 type DownloadState struct {
@@ -54,9 +55,9 @@ func main() {
 }
 
 func isCanRangeDownload(url string) (int64, error) {
-	clinet := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 30 * time.Second}
 
-	resp, err := clinet.Head(url)
+	resp, err := client.Head(url)
 	if err != nil {
 		return 0, err
 	}
@@ -99,6 +100,7 @@ func downloadFile(url, savePath string) error {
 		return err
 	}
 	totalChunks := (fileSize + chunkSize - 1) / chunkSize
+	total := int(totalChunks)
 
 	filename := path.Base(url)
 	file, err := os.Create(savePath + "/" + filename)
@@ -117,77 +119,126 @@ func downloadFile(url, savePath string) error {
 		TotalSize:        fileSize,
 		ChunkSize:        chunkSize,
 		TotalChunks:      int(totalChunks),
-		DownloadedChunks: make([]bool, totalChunks),
+		DownloadedChunks: make([]bool, total),
 	}
 
 	progressFile := fmt.Sprintf("%s/%s.progress", savePath, filename)
 	if _, err := os.Stat(progressFile); err != nil {
 		if os.IsNotExist(err) {
-			if _, err = os.Create(progressFile); err != nil {
+			progress, err := os.Create(progressFile)
+			if err != nil {
 				return err
 			}
+			if err = progress.Close(); err != nil {
+				return err
+			}
+		} else {
+			return err
 		}
 	} else {
 		data, _ := os.ReadFile(progressFile)
 		json.Unmarshal(data, &state)
 	}
+	if len(state.DownloadedChunks) != total {
+		downloadedChunks := make([]bool, total)
+		copy(downloadedChunks, state.DownloadedChunks)
+		state.DownloadedChunks = downloadedChunks
+	}
 
-	var beg, end int64
-	for i := range totalChunks {
-		if state.DownloadedChunks[i] {
-			fmt.Printf("Чанк %d уже загружен, пропускаем\n", i+1)
-			continue
-		}
-		beg, end = chunkBorder(chunkSize, i+1, totalChunks, fileSize)
-		log.Printf("Чанк %d/%d: байты %d-%d\n", i+1, totalChunks, beg, end)
+	jobs := make(chan int, total)
+	errCh := make(chan error, total)
+	client := &http.Client{Timeout: 30 * time.Second}
+	var wg sync.WaitGroup
+	var fileMu sync.Mutex
+	var stateMu sync.Mutex
 
-		req, err := http.NewRequest("GET", url, nil)
-		if err != nil {
-			return err
-		}
+	processChunk := func(id int) error {
+		beg, end := chunkBorder(chunkSize, int64(id+1), totalChunks, fileSize)
+		log.Printf("Чанк %d/%d: байты %d-%d\n", id+1, totalChunks, beg, end)
 
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", beg, end))
-		clinet := &http.Client{Timeout: 30 * time.Second}
-		isBad := false
-		var resp *http.Response
+		var lastErr error
 		for attempt := 0; attempt < maxRetries; attempt++ {
+			req, err := http.NewRequest("GET", url, nil)
+			if err != nil {
+				return err
+			}
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", beg, end))
 
-			resp, err = clinet.Do(req)
-			if err == nil {
-				break
+			resp, err := client.Do(req)
+			if err != nil {
+				lastErr = err
+			} else if resp.StatusCode != http.StatusPartialContent {
+				resp.Body.Close()
+				return fmt.Errorf("сервер вернул: %d", resp.StatusCode)
+			} else {
+				data, readErr := io.ReadAll(resp.Body)
+				closeErr := resp.Body.Close()
+				if readErr != nil {
+					lastErr = readErr
+				} else if closeErr != nil {
+					lastErr = closeErr
+				} else if int64(len(data)) != end-beg+1 {
+					lastErr = fmt.Errorf("чанк %d: ожидалось %d байт, получено %d", id+1, end-beg+1, len(data))
+				} else {
+					fileMu.Lock()
+					written, err := file.WriteAt(data, beg)
+					fileMu.Unlock()
+					if err != nil {
+						return err
+					}
+					if written != len(data) {
+						return io.ErrShortWrite
+					}
+
+					stateMu.Lock()
+					state.DownloadedChunks[id] = true
+					stateData, err := json.MarshalIndent(state, "", " ")
+					if err == nil {
+						err = os.WriteFile(progressFile, stateData, 0644)
+					}
+					stateMu.Unlock()
+					return err
+				}
 			}
 
 			if attempt < maxRetries-1 {
 				fmt.Printf("Ошибка? повтор через %v...\n", retryDelay)
 				time.Sleep(retryDelay)
-			} else {
-				isBad = true
 			}
 		}
-		if isBad {
+
+		return fmt.Errorf("не удалось скачать чанк %d после %d попыток: %w", id+1, maxRetries, lastErr)
+	}
+
+	for w := 0; w < maxWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := range jobs {
+				if err := processChunk(id); err != nil {
+					errCh <- err
+				}
+			}
+		}()
+	}
+
+	for i := range total {
+		stateMu.Lock()
+		downloaded := state.DownloadedChunks[i]
+		stateMu.Unlock()
+		if downloaded {
+			fmt.Printf("Чанк %d уже загружен, пропускаем\n", i+1)
 			continue
 		}
-		if resp.StatusCode != http.StatusPartialContent {
-			return fmt.Errorf("сервер вернул: %d", resp.StatusCode)
-		}
+		jobs <- i
+	}
+	close(jobs)
 
-		if _, err = file.Seek(beg, io.SeekStart); err != nil {
-			log.Println(err)
-		}
+	wg.Wait()
+	close(errCh)
 
-		if _, err = io.Copy(file, resp.Body); err != nil {
-
-			log.Println(err)
-			continue
-		}
+	for err := range errCh {
 		if err != nil {
-			defer resp.Body.Close()
-		}
-
-		state.DownloadedChunks[i] = true
-		data, _ := json.MarshalIndent(state, "", " ")
-		if err := os.WriteFile(progressFile, data, 0644); err != nil {
-
 			return err
 		}
 	}
