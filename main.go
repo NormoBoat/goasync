@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"path"
 	"strconv"
 	"sync"
@@ -41,8 +43,24 @@ func main() {
 	output := os.Args[1]
 	urls := os.Args[2:]
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	defer signal.Stop(sigChan)
+
 	progress := mpb.New()
 	log.SetOutput(progress)
+
+	go func() {
+		select {
+		case <-sigChan:
+			log.Println("Получен сигнал прерывания, завершаем работу...")
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 
 	var wg sync.WaitGroup
 	for _, file := range urls {
@@ -50,21 +68,29 @@ func main() {
 		go func(u string) {
 			defer wg.Done()
 
-			err := downloadFile(u, output, progress)
-			if err != nil {
+			err := downloadFile(ctx, u, output, progress)
+			if err != nil && !errors.Is(err, context.Canceled) {
 				log.Println(err)
 			}
 
 		}(file)
 	}
 	wg.Wait()
+	if ctx.Err() != nil {
+		log.Println("Выход")
+	}
 	progress.Wait()
 }
 
-func isCanRangeDownload(url string) (int64, error) {
+func isCanRangeDownload(ctx context.Context, url string) (int64, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 
-	resp, err := client.Head(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err
 	}
@@ -97,12 +123,12 @@ func isCanRangeDownload(url string) (int64, error) {
 	return size, nil
 }
 
-func downloadFile(url, savePath string, progress *mpb.Progress) error {
+func downloadFile(ctx context.Context, url, savePath string, progress *mpb.Progress) error {
 	if err := os.MkdirAll(savePath, 0777); err != nil {
 		return errors.New("ошибка создания каталока загрузки")
 	}
 
-	fileSize, err := isCanRangeDownload(url)
+	fileSize, err := isCanRangeDownload(ctx, url)
 	if err != nil {
 		return err
 	}
@@ -152,6 +178,18 @@ func downloadFile(url, savePath string, progress *mpb.Progress) error {
 		state.DownloadedChunks = downloadedChunks
 	}
 
+	var stateMu sync.Mutex
+	saveState := func() error {
+		stateMu.Lock()
+		defer stateMu.Unlock()
+
+		stateData, err := json.MarshalIndent(state, "", " ")
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(progressFile, stateData, 0644)
+	}
+
 	downloaded := downloadedBytes(state.DownloadedChunks, totalChunks, fileSize)
 	bar := progress.AddBar(fileSize,
 		mpb.PrependDecorators(
@@ -178,7 +216,6 @@ func downloadFile(url, savePath string, progress *mpb.Progress) error {
 	client := &http.Client{Timeout: 30 * time.Second}
 	var wg sync.WaitGroup
 	var fileMu sync.Mutex
-	var stateMu sync.Mutex
 
 	processChunk := func(id int) error {
 		beg, end := chunkBorder(chunkSize, int64(id+1), totalChunks, fileSize)
@@ -220,12 +257,8 @@ func downloadFile(url, savePath string, progress *mpb.Progress) error {
 
 					stateMu.Lock()
 					state.DownloadedChunks[id] = true
-					stateData, err := json.MarshalIndent(state, "", " ")
-					if err == nil {
-						err = os.WriteFile(progressFile, stateData, 0644)
-					}
 					stateMu.Unlock()
-					if err != nil {
+					if err := saveState(); err != nil {
 						return err
 					}
 
@@ -236,7 +269,11 @@ func downloadFile(url, savePath string, progress *mpb.Progress) error {
 
 			if attempt < maxRetries-1 {
 				log.Printf("Ошибка? повтор через %v...\n", retryDelay)
-				time.Sleep(retryDelay)
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(retryDelay):
+				}
 			}
 		}
 
@@ -247,14 +284,26 @@ func downloadFile(url, savePath string, progress *mpb.Progress) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for id := range jobs {
-				if err := processChunk(id); err != nil {
-					errCh <- err
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case id, ok := <-jobs:
+					if !ok {
+						return
+					}
+					if ctx.Err() != nil {
+						return
+					}
+					if err := processChunk(id); err != nil {
+						errCh <- err
+					}
 				}
 			}
 		}()
 	}
 
+queueJobs:
 	for i := range total {
 		stateMu.Lock()
 		downloaded := state.DownloadedChunks[i]
@@ -263,12 +312,26 @@ func downloadFile(url, savePath string, progress *mpb.Progress) error {
 			log.Printf("Чанк %d уже загружен, пропускаем\n", i+1)
 			continue
 		}
-		jobs <- i
+
+		select {
+		case <-ctx.Done():
+			log.Println("Ожидание завершения текущих загрузок...")
+			break queueJobs
+		case jobs <- i:
+		}
 	}
 	close(jobs)
 
 	wg.Wait()
 	close(errCh)
+
+	if err := saveState(); err != nil {
+		return err
+	}
+	if ctx.Err() != nil {
+		log.Println("Состояние сохранено")
+		return nil
+	}
 
 	for err := range errCh {
 		if err != nil {
